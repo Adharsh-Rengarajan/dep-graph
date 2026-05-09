@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Composio Tool Dependency Graph</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='25' cy='30' r='10' fill='%237c8ef5'/><circle cx='75' cy='25' r='10' fill='%2334d399'/><circle cx='50' cy='75' r='12' fill='%23fbbf24'/><line x1='25' y1='30' x2='50' y2='75' stroke='%2394a3b8' stroke-width='3'/><line x1='75' y1='25' x2='50' y2='75' stroke='%2394a3b8' stroke-width='3'/><line x1='25' y1='30' x2='75' y2='25' stroke='%2394a3b8' stroke-width='3'/></svg>">
+<script src="https://unpkg.com/cytoscape@3.30.2/dist/cytoscape.min.js"></script>
+<script src="https://unpkg.com/dagre@0.8.5/dist/dagre.min.js"></script>
+<script src="https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>
+<style>
+  :root {
+    --bg: #0e1014;
+    --bg-elev: #161922;
+    --bg-elev-2: #1d2230;
+    --border: #2a2f3c;
+    --border-strong: #3b4252;
+    --fg: #e5e7eb;
+    --fg-dim: #9ca3af;
+    --fg-faint: #6b7280;
+    --accent: #7c8ef5;
+    --gmail: #ea4335;
+    --calendar: #4285f4;
+    --drive: #34a853;
+    --docs: #4285f4;
+    --sheets: #0f9d58;
+    --slides: #f4b400;
+    --contacts: #1a73e8;
+    --photos: #ec407a;
+    --pulls: #8957e5;
+    --issues: #d29922;
+    --repos: #2188ff;
+    --actions: #6cc644;
+    --teams: #6f42c1;
+    --orgs: #28a745;
+    --users: #6e7681;
+    --git: #f9826c;
+    --explicit: #34d399;
+    --heuristic: #94a3b8;
+    --low: #f87171;
+    --src-tool: #60a5fa;
+    --src-user: #fbbf24;
+    --src-static: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; background: var(--bg); color: var(--fg); }
+  body { display: grid; grid-template-columns: 340px 1fr 420px; height: 100vh; overflow: hidden; transition: grid-template-columns 0.2s ease; }
+  body.no-info { grid-template-columns: 340px 1fr 0; }
+
+  /* Left sidebar */
+  aside.left { background: var(--bg-elev); border-right: 1px solid var(--border); overflow-y: auto; padding: 18px 18px 60px; }
+  header { padding-bottom: 14px; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
+  h1 { font-size: 16px; margin: 0 0 4px; font-weight: 600; }
+  .subtitle { font-size: 12px; color: var(--fg-dim); line-height: 1.5; }
+  .stat-row { display: flex; gap: 10px; margin: 12px 0 0; flex-wrap: wrap; }
+  .stat { background: var(--bg); border-radius: 6px; padding: 6px 10px; font-size: 11px; color: var(--fg-dim); border: 1px solid var(--border); flex: 1; min-width: 70px; }
+  .stat strong { color: var(--fg); display: block; font-size: 14px; font-weight: 600; }
+
+  section { margin-top: 18px; }
+  section h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-dim); margin: 0 0 8px; font-weight: 600; }
+
+  .search-input { width: 100%; padding: 9px 11px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; font-size: 13px; outline: none; font-family: inherit; }
+  .search-input:focus { border-color: var(--accent); }
+
+  .results { margin-top: 8px; max-height: 280px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+  .results:empty { display: none; }
+  .result { padding: 8px 11px; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .result:last-child { border-bottom: none; }
+  .result:hover { background: var(--bg-elev-2); }
+  .result .slug { font-family: ui-monospace, SF Mono, Menlo, monospace; font-size: 11px; color: var(--fg); word-break: break-all; }
+  .result .name { color: var(--fg-dim); margin-top: 2px; font-size: 11px; }
+
+  .legend { display: flex; flex-direction: column; gap: 6px; }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 1.4; }
+  .legend-swatch { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+  .controls { display: flex; flex-direction: column; gap: 8px; }
+  .btn { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-size: 12px; cursor: pointer; text-align: left; font-family: inherit; transition: border-color 0.15s; }
+  .btn:hover { background: var(--bg-elev-2); border-color: var(--accent); }
+  .btn .label { font-weight: 600; display: block; }
+  .btn .hint { color: var(--fg-dim); font-size: 11px; display: block; margin-top: 2px; }
+
+  /* Center: graph */
+  main { position: relative; overflow: hidden; }
+  #cy { width: 100%; height: 100vh; }
+
+  #empty { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: var(--fg-dim); pointer-events: none; max-width: 520px; padding: 0 20px; }
+  #empty h2 { color: var(--fg); margin: 0 0 10px; font-size: 18px; }
+  #empty p { line-height: 1.6; font-size: 13px; }
+
+  /* Right: info panel — proper drawer column, not floating overlay */
+  #info { background: var(--bg-elev); border-left: 1px solid var(--border); display: flex; flex-direction: column; height: 100vh; min-width: 0; }
+  body.no-info #info { display: none; }
+
+  #info-header { padding: 14px 16px 12px; border-bottom: 1px solid var(--border); position: relative; flex-shrink: 0; }
+  #info-header .close { position: absolute; top: 10px; right: 10px; cursor: pointer; color: var(--fg-dim); border: none; background: transparent; font-size: 18px; line-height: 1; padding: 4px 8px; border-radius: 4px; }
+  #info-header .close:hover { background: var(--bg-elev-2); color: var(--fg); }
+  #info-header h3 { margin: 4px 0 4px; font-size: 14px; font-weight: 600; word-break: break-word; padding-right: 28px; }
+  #info-header .slug-line { font-family: ui-monospace, monospace; font-size: 10px; color: var(--fg-dim); word-break: break-all; line-height: 1.4; }
+  #info-header .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+  .group-tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: white; font-weight: 600; }
+
+  #info-body { overflow-y: auto; flex: 1; padding: 14px 16px 24px; }
+  #info-body .desc { color: var(--fg-dim); line-height: 1.5; margin-bottom: 14px; font-size: 12px; }
+  #info-body .summary-row { display: flex; gap: 8px; margin-bottom: 14px; }
+  #info-body .summary-row .stat { flex: 1; }
+
+  .param-section { margin-top: 14px; }
+  .param-section-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; cursor: pointer; user-select: none; }
+  .param-section-header:hover .section-title { color: var(--fg); }
+  .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--fg-dim); font-weight: 600; }
+  .section-count { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; font-size: 10px; color: var(--fg-dim); }
+  .section-toggle { color: var(--fg-faint); font-size: 11px; transition: transform 0.15s; }
+  .param-section.collapsed .section-toggle { transform: rotate(-90deg); }
+  .param-section.collapsed .param-list { display: none; }
+
+  .param-list { display: flex; flex-direction: column; gap: 6px; }
+  .param-block { background: var(--bg); border: 1px solid var(--border); border-left-width: 3px; border-radius: 4px; padding: 9px 11px; font-size: 12px; }
+  .param-block.src-tool { border-left-color: var(--src-tool); }
+  .param-block.src-user { border-left-color: var(--src-user); }
+  .param-block.src-static { border-left-color: var(--src-static); }
+  .param-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .param-name { font-family: ui-monospace, monospace; font-size: 11px; color: var(--fg); font-weight: 500; }
+  .param-tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+  .tag-tool { background: rgba(96, 165, 250, 0.18); color: #93c5fd; }
+  .tag-user { background: rgba(251, 191, 36, 0.15); color: #fcd34d; }
+  .tag-static { background: rgba(107, 114, 128, 0.2); color: #d1d5db; }
+  .tag-required { background: rgba(248, 113, 113, 0.15); color: #fca5a5; }
+  .tag-explicit { background: var(--explicit); color: #064e3b; }
+  .tag-heuristic { background: var(--heuristic); color: #1e293b; }
+  .tag-low { background: var(--low); color: #7f1d1d; }
+
+  .param-desc { color: var(--fg-dim); margin-top: 5px; font-size: 11px; line-height: 1.45; }
+  .satisfied-by { margin-top: 7px; padding-top: 7px; border-top: 1px dashed var(--border); }
+  .satisfied-by-label { font-size: 9px; color: var(--fg-faint); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 3px; }
+  .satisfied-by-list { display: flex; flex-direction: column; gap: 2px; }
+  .satisfied-by-list a { font-family: ui-monospace, monospace; font-size: 10px; color: var(--accent); cursor: pointer; text-decoration: none; word-break: break-all; line-height: 1.4; }
+  .satisfied-by-list a:hover { text-decoration: underline; }
+
+  /* Scrollbar styling — subtle, dark */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; border: 2px solid var(--bg); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+</style>
+</head>
+<body class="no-info">
+  <aside class="left">
+    <header>
+      <h1>Composio Tool Dependency Graph</h1>
+      <p class="subtitle">Click a tool to see what it depends on and what it produces. Edges flow from <strong style="color:var(--explicit)">producer → consumer</strong>.</p>
+      <div class="stat-row" id="stat-row"></div>
+    </header>
+
+    <section>
+      <h2>Search a tool</h2>
+      <input class="search-input" id="search" placeholder="Try: REPLY_TO_THREAD, MERGE_PULL, SEND_EMAIL …" />
+      <div class="results" id="results"></div>
+    </section>
+
+    <section>
+      <h2>Top producers (most depended-upon)</h2>
+      <div class="controls" id="hubs"></div>
+    </section>
+
+    <section>
+      <h2>Worked examples</h2>
+      <div class="controls">
+        <button class="btn" data-focus="GOOGLESUPER_REPLY_TO_THREAD"><span class="label">Reply to a Gmail thread</span><span class="hint">canonical case from the brief — explicit dep on LIST_THREADS / FETCH_EMAILS</span></button>
+        <button class="btn" data-focus="GITHUB_MERGE_A_PULL_REQUEST"><span class="label">Merge a pull request</span><span class="hint">needs owner + repo + pull_number — three handles</span></button>
+        <button class="btn" data-focus="GOOGLESUPER_SEND_EMAIL"><span class="label">Send an email</span><span class="hint">recipient is user-supplied; if a name, contacts must resolve it first</span></button>
+        <button class="btn" data-focus="GITHUB_CREATE_AN_ISSUE_COMMENT"><span class="label">Comment on an issue</span><span class="hint">needs issue_number from LIST_REPOSITORY_ISSUES</span></button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Edge confidence</h2>
+      <div class="legend">
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--explicit)"></span>Explicit — Composio engineers wrote it in the param description</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--heuristic)"></span>Heuristic — concept-name match (top 4 producers)</div>
+        <div class="legend-item"><span class="legend-swatch" style="background:var(--low)"></span>Low — looks like a handle but no producer found</div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Toolkit colors</h2>
+      <div class="legend" id="palette"></div>
+    </section>
+  </aside>
+
+  <main>
+    <div id="cy"></div>
+    <div id="empty">
+      <h2>Pick a tool to focus on</h2>
+      <p>The full graph has <strong id="totalCounts"></strong>. Rendering it all at once would be unreadable. Click a tool above (or search) to see its 1-hop neighborhood — producers it depends on, and consumers that depend on it.</p>
+    </div>
+  </main>
+
+  <aside id="info">
+    <div id="info-header">
+      <button class="close" onclick="dismissInfo()" title="Close (Esc)">×</button>
+      <div id="info-header-content"></div>
+    </div>
+    <div id="info-body"></div>
+  </aside>
+
+  <script>
+    const GROUP_COLOR = {
+      gmail: 'var(--gmail)', calendar: 'var(--calendar)', drive: 'var(--drive)',
+      docs: 'var(--docs)', sheets: 'var(--sheets)', slides: 'var(--slides)',
+      contacts: 'var(--contacts)', photos: 'var(--photos)', tasks: '#9333ea',
+      meet: '#3b82f6', pulls: 'var(--pulls)', issues: 'var(--issues)',
+      repos: 'var(--repos)', actions: 'var(--actions)', teams: 'var(--teams)',
+      orgs: 'var(--orgs)', users: 'var(--users)', gists: '#475569',
+      releases: '#f59e0b', git: 'var(--git)', secrets: '#dc2626', other: '#64748b'
+    };
+    const RESOLVED_COLOR = {};
+    function resolveColor(g) {
+      if (RESOLVED_COLOR[g]) return RESOLVED_COLOR[g];
+      const v = GROUP_COLOR[g] || GROUP_COLOR.other;
+      if (v.startsWith('var(')) {
+        const name = v.slice(4, -1);
+        const c = getComputedStyle(document.documentElement).getPropertyValue(name).trim() || '#64748b';
+        RESOLVED_COLOR[g] = c;
+        return c;
+      }
+      RESOLVED_COLOR[g] = v;
+      return v;
+    }
+
+    let graphData;
+    let cy;
+    let nodeIndex;
+    let currentSlug = null;
+
+    async function init() {
+      const res = await fetch('graph.json');
+      graphData = await res.json();
+      nodeIndex = new Map(graphData.nodes.map(n => [n.slug, n]));
+
+      const stats = graphData.meta.counts;
+      document.getElementById('stat-row').innerHTML = `
+        <div class="stat"><strong>${stats.nodes}</strong>tools</div>
+        <div class="stat"><strong>${stats.edges}</strong>edges</div>
+        <div class="stat"><strong>${stats.explicitEdges}</strong>explicit</div>
+      `;
+      document.title = `Composio Dep Graph — ${stats.nodes} tools, ${stats.edges} edges`;
+      document.getElementById('totalCounts').textContent = `${stats.nodes} nodes and ${stats.edges} edges`;
+
+      // Top hub buttons
+      const inDeg = {};
+      for (const e of graphData.edges) inDeg[e.from] = (inDeg[e.from] || 0) + 1;
+      const top = Object.entries(inDeg).sort((a,b) => b[1] - a[1]).slice(0, 6);
+      const hubs = document.getElementById('hubs');
+      for (const [slug, deg] of top) {
+        const node = nodeIndex.get(slug);
+        if (!node) continue;
+        const btn = document.createElement('button');
+        btn.className = 'btn';
+        btn.dataset.focus = slug;
+        btn.innerHTML = `<span class="label" style="font-family:ui-monospace,monospace;font-size:10px">${slug}</span><span class="hint">satisfies ${deg} downstream params</span>`;
+        hubs.appendChild(btn);
+      }
+
+      // Palette
+      const groupSet = new Set(graphData.nodes.map(n => n.group));
+      const palette = document.getElementById('palette');
+      for (const g of [...groupSet].sort()) {
+        const div = document.createElement('div');
+        div.className = 'legend-item';
+        div.innerHTML = `<span class="legend-swatch" style="background:${resolveColor(g)}"></span>${g}`;
+        palette.appendChild(div);
+      }
+
+      document.body.addEventListener('click', e => {
+        const btn = e.target.closest('[data-focus]');
+        if (btn) { focus(btn.dataset.focus); e.preventDefault(); }
+      });
+
+      document.getElementById('search').addEventListener('input', onSearch);
+      document.addEventListener('keydown', e => { if (e.key === 'Escape') dismissInfo(); });
+
+      cy = cytoscape({
+        container: document.getElementById('cy'),
+        elements: [],
+        style: cyStyle(),
+        layout: { name: 'grid' },
+        wheelSensitivity: 0.2,
+      });
+      cy.on('tap', 'node', e => {
+        const data = e.target.data();
+        if (data.kind === 'bundle') {
+          showBundleMembers(data);
+        } else {
+          focus(e.target.id());
+        }
+      });
+    }
+
+    function showBundleMembers(data) {
+      const out = document.getElementById('results');
+      const list = (data.sampleSlugs || []).map(s => {
+        const n = nodeIndex.get(s);
+        return n ? { slug: s, name: n.name } : null;
+      }).filter(Boolean);
+      out.innerHTML = `
+        <div class="result" style="background:var(--bg-elev-2);cursor:default">
+          <div class="slug" style="color:var(--fg-dim);font-family:inherit;font-size:11px">
+            <strong>${data.count} ${data.group} tools ${data.side === 'in' ? 'producing for' : 'consuming from'} this</strong>
+          </div>
+          <div class="name" style="margin-top:2px">click any to focus</div>
+        </div>
+        ${list.map(n => `
+          <div class="result" data-focus="${n.slug}">
+            <div class="slug">${n.slug}</div>
+            <div class="name">${escape(n.name)}</div>
+          </div>
+        `).join('')}
+      `;
+      // Scroll the search/results into view
+      document.getElementById('search').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function cyStyle() {
+      return [
+        { selector: 'node', style: {
+          'background-color': 'data(color)',
+          'label': 'data(short)',
+          'color': '#e5e7eb',
+          'font-size': 9,
+          'text-outline-color': '#0e1014',
+          'text-outline-width': 2,
+          'text-valign': 'bottom',
+          'text-margin-y': 5,
+          'text-wrap': 'ellipsis',
+          'text-max-width': 130,
+          'width': 22, 'height': 22,
+          'border-color': '#0e1014',
+          'border-width': 2,
+        }},
+        { selector: 'node.center', style: {
+          'width': 36, 'height': 36,
+          'border-color': '#fbbf24',
+          'border-width': 3,
+          'font-size': 11,
+        }},
+        { selector: 'node.read-only', style: { 'shape': 'diamond' }},
+        { selector: 'node.bundle', style: {
+          'shape': 'round-rectangle',
+          'background-color': 'data(color)',
+          'background-opacity': 0.25,
+          'border-color': 'data(color)',
+          'border-width': 2,
+          'border-style': 'dashed',
+          'width': 'label',
+          'height': 24,
+          'padding': 8,
+          'text-valign': 'center',
+          'text-halign': 'center',
+          'text-margin-y': 0,
+          'font-size': 10,
+          'font-weight': 'bold',
+          'color': '#e5e7eb',
+        }},
+        { selector: 'edge', style: {
+          'curve-style': 'bezier',
+          'target-arrow-shape': 'triangle',
+          'arrow-scale': 1,
+          'width': 1.5,
+          'line-color': 'data(color)',
+          'target-arrow-color': 'data(color)',
+          'opacity': 0.85,
+          'label': 'data(param)',
+          'font-size': 8,
+          'color': '#9ca3af',
+          'text-outline-color': '#0e1014',
+          'text-outline-width': 2,
+          'text-rotation': 'autorotate',
+        }},
+        { selector: 'edge.explicit', style: { 'width': 2.5, 'line-style': 'solid' }},
+        { selector: 'edge.low',      style: { 'line-style': 'dashed' }},
+        { selector: 'edge.bundle-edge', style: {
+          'line-style': 'dotted',
+          'width': 2,
+          'opacity': 0.55,
+          'label': '',
+          'target-arrow-shape': 'triangle-tee',
+        }},
+      ];
+    }
+
+    function shortLabel(slug) { return slug.replace(/^(GOOGLESUPER|GITHUB)_/, ''); }
+
+    /** Per-side neighbor cap. Beyond this we bucket into group bundles. */
+    const NEIGHBOR_CAP = 30;
+
+    /**
+     * Build the cytoscape elements for a focus view, aggregating excess neighbors
+     * into "bundle" nodes grouped by sub-toolkit (gmail, pulls, issues, …).
+     */
+    function buildFocusElements(slug) {
+      const incoming = graphData.edges.filter(e => e.to === slug);
+      const outgoing = graphData.edges.filter(e => e.from === slug);
+
+      // Pick a layout based on neighbor count
+      const total = incoming.length + outgoing.length;
+
+      // Group edges by side+target group
+      const aggregateSide = (edges, side /* 'in' | 'out' */) => {
+        // Group by (group of OTHER endpoint)
+        const otherSlug = side === 'in' ? (e) => e.from : (e) => e.to;
+        const byGroup = new Map();
+        for (const e of edges) {
+          const s = otherSlug(e);
+          const node = nodeIndex.get(s);
+          if (!node) continue;
+          if (!byGroup.has(node.group)) byGroup.set(node.group, []);
+          byGroup.get(node.group).push({ edge: e, node });
+        }
+        // If under the cap, return all edges as direct neighbors.
+        if (edges.length <= NEIGHBOR_CAP) {
+          return { mode: 'direct', edges };
+        }
+        // Over cap: keep up to 4 individual nodes per group (the canonical ones),
+        // and roll the rest into a group bundle.
+        const direct = [];
+        const bundles = []; // {group, count, sampleSlugs}
+        for (const [group, items] of byGroup) {
+          // Sort by frequency of slug occurrence (most-referenced first) — stable enough
+          items.sort((a, b) => a.node.slug.length - b.node.slug.length);
+          const head = items.slice(0, 4);
+          const tail = items.slice(4);
+          for (const it of head) direct.push(it.edge);
+          if (tail.length > 0) {
+            bundles.push({
+              group,
+              count: tail.length,
+              sampleSlugs: tail.map(it => it.node.slug),
+              side,
+            });
+          }
+        }
+        return { mode: 'bundled', edges: direct, bundles };
+      };
+
+      const inSide = aggregateSide(incoming, 'in');
+      const outSide = aggregateSide(outgoing, 'out');
+
+      const allEdges = [...inSide.edges, ...outSide.edges];
+      const neighborSlugs = new Set([slug, ...allEdges.map(e => e.from), ...allEdges.map(e => e.to)]);
+
+      const elements = [];
+      for (const s of neighborSlugs) {
+        const n = nodeIndex.get(s);
+        if (!n) continue;
+        elements.push({
+          data: { id: s, short: shortLabel(s), color: resolveColor(n.group), kind: 'tool' },
+          classes: [s === slug ? 'center' : '', n.isReadOnly ? 'read-only' : ''].filter(Boolean).join(' ')
+        });
+      }
+      // Add edges between real tools
+      for (const e of allEdges) {
+        const conf = e.confidence;
+        const color = conf === 'explicit' ? '#34d399' : conf === 'low' ? '#f87171' : '#94a3b8';
+        elements.push({
+          data: { id: `${e.from}->${e.to}:${e.param}`, source: e.from, target: e.to, param: e.param, color, conf, kind: 'edge' },
+          classes: conf,
+        });
+      }
+      // Add bundle nodes + bundle edges
+      const bundles = [...(inSide.bundles || []), ...(outSide.bundles || [])];
+      for (let i = 0; i < bundles.length; i++) {
+        const b = bundles[i];
+        const bid = `bundle:${b.side}:${b.group}:${i}`;
+        const label = `+${b.count} more ${b.group}`;
+        elements.push({
+          data: {
+            id: bid,
+            short: label,
+            color: resolveColor(b.group),
+            kind: 'bundle',
+            group: b.group,
+            count: b.count,
+            sampleSlugs: b.sampleSlugs,
+            side: b.side,
+          },
+          classes: 'bundle',
+        });
+        if (b.side === 'in') {
+          elements.push({
+            data: { id: `${bid}->${slug}`, source: bid, target: slug, color: '#94a3b8', kind: 'bundle-edge' },
+            classes: 'bundle-edge',
+          });
+        } else {
+          elements.push({
+            data: { id: `${slug}->${bid}`, source: slug, target: bid, color: '#94a3b8', kind: 'bundle-edge' },
+            classes: 'bundle-edge',
+          });
+        }
+      }
+
+      // Pick a layout: dagre works well up to ~50 nodes; concentric is better for hubs.
+      let layout;
+      const nodeCount = neighborSlugs.size + bundles.length;
+      if (nodeCount <= 50) {
+        layout = { name: 'dagre', rankDir: 'LR', nodeSep: 28, rankSep: 110, edgeSep: 12 };
+      } else {
+        // Concentric: center at the middle, ring of producers + consumers around it.
+        layout = {
+          name: 'concentric',
+          concentric: (n) => n.id() === slug ? 100 : (n.data('kind') === 'bundle' ? 1 : 50),
+          levelWidth: () => 1,
+          minNodeSpacing: 30,
+          spacingFactor: 1.1,
+          startAngle: -Math.PI / 2,
+          animate: false,
+        };
+      }
+
+      return { elements, layout, totalNeighbors: total, displayedNeighbors: allEdges.length, bundles };
+    }
+
+    function focus(slug) {
+      if (!nodeIndex.get(slug)) return;
+      currentSlug = slug;
+      document.getElementById('empty').style.display = 'none';
+      document.body.classList.remove('no-info');
+
+      const { elements, layout, totalNeighbors, displayedNeighbors, bundles } = buildFocusElements(slug);
+
+      cy.elements().remove();
+      cy.add(elements);
+      cy.layout(layout).run();
+      cy.fit(undefined, 60);
+
+      requestAnimationFrame(() => cy.resize());
+
+      renderInfo(slug, { totalNeighbors, displayedNeighbors, bundles });
+    }
+
+    function dismissInfo() {
+      document.body.classList.add('no-info');
+      currentSlug = null;
+      requestAnimationFrame(() => cy && cy.resize() && cy.fit(undefined, 50));
+    }
+
+    function renderInfo(slug, layoutInfo = {}) {
+      const node = nodeIndex.get(slug);
+      if (!node) return;
+      const profile = graphData.tools[slug] || {};
+      const incoming = graphData.edges.filter(e => e.to === slug);
+      const outgoing = graphData.edges.filter(e => e.from === slug);
+
+      const groupColor = resolveColor(node.group);
+
+      document.getElementById('info-header-content').innerHTML = `
+        <div class="tags">
+          <span class="group-tag" style="background:${groupColor}">${node.group}</span>
+          <span class="group-tag" style="background:${node.isReadOnly ? '#10b981' : '#dc2626'}">${node.isReadOnly ? 'read-only' : 'mutating'}</span>
+        </div>
+        <h3>${escape(node.name)}</h3>
+        <div class="slug-line">${node.slug}</div>
+      `;
+
+      // Group params by source. Within each group: required first, then alphabetical.
+      const params = Object.entries(profile);
+      const buckets = { tool: [], user: [], static: [] };
+      for (const [pname, p] of params) {
+        (buckets[p.source] || buckets.user).push([pname, p]);
+      }
+      for (const k of Object.keys(buckets)) {
+        buckets[k].sort((a, b) => {
+          const ar = a[1].required ? 0 : 1;
+          const br = b[1].required ? 0 : 1;
+          if (ar !== br) return ar - br;
+          return a[0].localeCompare(b[0]);
+        });
+      }
+
+      const sectionLabels = {
+        tool: { title: 'Needs another tool', desc: 'Opaque handles — must come from a producer', startCollapsed: false },
+        user: { title: 'Needs the user', desc: 'Free-form input from the human', startCollapsed: false },
+        static: { title: 'Static / has default', desc: 'Enums or default values — agent can leave alone', startCollapsed: true },
+      };
+
+      const renderParamBlock = (pname, p) => {
+        const tagSrc = `<span class="param-tag tag-${p.source}">${p.source}</span>`;
+        const tagReq = p.required ? '<span class="param-tag tag-required">required</span>' : '';
+        const tagConf = (p.source === 'tool' || p.confidence === 'low')
+          ? `<span class="param-tag tag-${p.confidence}">${p.confidence}</span>` : '';
+        const desc = p.description ? `<div class="param-desc">${escape(p.description)}</div>` : '';
+        const sat = p.satisfied_by && p.satisfied_by.length > 0 ? `
+          <div class="satisfied-by">
+            <div class="satisfied-by-label">satisfied by</div>
+            <div class="satisfied-by-list">${p.satisfied_by.map(s => `<a data-focus="${s}">${s}</a>`).join('')}</div>
+          </div>` : '';
+        return `
+          <div class="param-block src-${p.source}">
+            <div class="param-row">
+              <span class="param-name">${pname}</span>
+              ${tagSrc}${tagReq}${tagConf}
+            </div>
+            ${desc}
+            ${sat}
+          </div>
+        `;
+      };
+
+      const renderSection = (key) => {
+        const items = buckets[key];
+        if (items.length === 0) return '';
+        const meta = sectionLabels[key];
+        return `
+          <div class="param-section ${meta.startCollapsed ? 'collapsed' : ''}" data-section="${key}">
+            <div class="param-section-header" onclick="toggleSection('${key}')">
+              <span class="section-title">${meta.title}</span>
+              <span class="section-count">${items.length}</span>
+              <span class="section-toggle">▾</span>
+            </div>
+            <div class="param-list">
+              ${items.map(([n, p]) => renderParamBlock(n, p)).join('')}
+            </div>
+          </div>
+        `;
+      };
+
+      const bundleNotice = (layoutInfo.bundles && layoutInfo.bundles.length > 0)
+        ? `<div style="background:rgba(124,142,245,0.08);border:1px solid rgba(124,142,245,0.25);border-radius:6px;padding:9px 11px;font-size:11px;color:var(--fg-dim);line-height:1.5;margin-bottom:14px">
+            <strong style="color:var(--accent)">Hub view:</strong> showing ${layoutInfo.displayedNeighbors} of ${layoutInfo.totalNeighbors} neighbors directly. The remaining ${layoutInfo.totalNeighbors - layoutInfo.displayedNeighbors} are grouped into <strong>+N more</strong> bundles by sub-toolkit. Click a bundle to see its members.
+          </div>`
+        : '';
+
+      document.getElementById('info-body').innerHTML = `
+        <div class="desc">${escape(node.description)}</div>
+        <div class="summary-row">
+          <div class="stat"><strong>${incoming.length}</strong>incoming deps</div>
+          <div class="stat"><strong>${outgoing.length}</strong>used by</div>
+          <div class="stat"><strong>${params.length}</strong>params</div>
+        </div>
+        ${bundleNotice}
+        ${renderSection('tool')}
+        ${renderSection('user')}
+        ${renderSection('static')}
+      `;
+
+      // Reset scroll position when switching tools
+      document.getElementById('info-body').scrollTop = 0;
+    }
+
+    function toggleSection(key) {
+      const el = document.querySelector(`.param-section[data-section="${key}"]`);
+      if (el) el.classList.toggle('collapsed');
+    }
+
+    function escape(s) { return String(s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+    function onSearch(e) {
+      const q = e.target.value.trim().toUpperCase();
+      const out = document.getElementById('results');
+      if (q.length < 2) { out.innerHTML = ''; return; }
+      const matches = graphData.nodes
+        .filter(n => n.slug.includes(q) || n.name.toUpperCase().includes(q))
+        .slice(0, 20);
+      out.innerHTML = matches.map(n => `
+        <div class="result" data-focus="${n.slug}">
+          <div class="slug">${n.slug}</div>
+          <div class="name">${escape(n.name)}</div>
+        </div>
+      `).join('');
+    }
+
+    init();
+  </script>
+</body>
+</html>
